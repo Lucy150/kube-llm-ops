@@ -1,0 +1,36 @@
+ollama:
+  image:
+    repository: ollama/ollama
+    tag: "0.30.10"
+    pullPolicy: IfNotPresent
+  # Small enough for CPU-only laptops (~400 MB). Try llama3.2:1b if you have RAM to spare.
+  model: qwen2.5:0.5b
+  keepAlive: 24h        # keep the model in memory between requests (avoid cold starts)
+  numParallel: 1        # Ollama-side parallelism; the gateway enforces the real limit
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClassName: ""   # empty = cluster default (kind: "standard")
+  resources:
+    requests: {cpu: "1", memory: 1Gi}
+    limits: {cpu: "4", memory: 3Gi}
+
+gateway:
+  image:
+    repository: llm-gateway
+    tag: dev
+    pullPolicy: IfNotPresent
+  replicas: 1
+  maxConcurrency: 2        # requests allowed to hit the model at once
+  queueTimeoutSeconds: 30  # how long a request may wait for a slot before 429
+  requestTimeoutSeconds: 180
+  defaultMaxTokens: 256
+  resources:
+    requests: {cpu: 50m, memory: 96Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+monitoring:
+  serviceMonitor: true     # requires Prometheus Operator CRDs (kube-prometheus-stack)
+  dashboard: true          # Grafana dashboard ConfigMap picked up by the Grafana sidecar
+  rules: true              # PrometheusRule with gateway SLO alerts
+  latencyP95ThresholdSeconds: 60

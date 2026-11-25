@@ -1,0 +1,73 @@
+# kube-prometheus-stack values tuned for a laptop kind cluster.
+fullnameOverride: kps
+
+# kind does not expose these control-plane components; disabling them avoids permanent false alerts.
+kubeControllerManager: {enabled: false}
+kubeScheduler: {enabled: false}
+kubeEtcd: {enabled: false}
+kubeProxy: {enabled: false}
+
+# Docker Desktop / WSL2 can't do the rshared host-root mount node-exporter wants.
+prometheus-node-exporter:
+  hostRootFsMount:
+    enabled: false
+
+prometheus:
+  prometheusSpec:
+    retention: 2d
+    # Pick up ServiceMonitors / PrometheusRules from every namespace, not just this release's.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests: {cpu: 100m, memory: 400Mi}
+
+grafana:
+  adminPassword: admin   # local lab only
+  # Infinity reads JSON from HTTP APIs: used for the "AI incident notes" panel (alert-summarizer /summaries)
+  plugins:
+    - yesoreyeram-infinity-datasource
+  additionalDataSources:
+    - name: AI Summaries
+      uid: ai-summaries
+      type: yesoreyeram-infinity-datasource
+      access: proxy
+      editable: false
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+
+alertmanager:
+
+  config:
+    global:
+      resolve_timeout: 5m
+      # Raw alert emails go to the in-cluster Mailpit (deploy/mail). See README "Email" for Gmail.
+      smtp_smarthost: mailpit.mail.svc.cluster.local:1025
+      smtp_from: alertmanager@kube-llm-ops.local
+      smtp_require_tls: false
+    route:
+      receiver: "null"
+      group_by: [alertname, namespace, pod]
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 4h
+      routes:
+        - receiver: "null"
+          matchers: ['alertname = "Watchdog"']
+        # Only send alerts from the namespaces we care about to the (slow, CPU-bound) summarizer.
+        - receiver: alert-summarizer
+          matchers: ['namespace =~ "demo|llm|aiops"']
+    receivers:
+      - name: "null"
+      - name: alert-summarizer
+        webhook_configs:
+          - url: http://alert-summarizer.aiops.svc.cluster.local:8080/webhook/alertmanager
+            send_resolved: false
+            max_alerts: 5
+        # Same alerts, emailed raw by Alertmanager (fires immediately; the AI summary email follows later)
+        email_configs:
+          - to: oncall@kube-llm-ops.local
+            send_resolved: true

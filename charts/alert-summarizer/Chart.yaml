@@ -1,0 +1,6 @@
+apiVersion: v2
+name: alert-summarizer
+description: AIOps - turns Alertmanager alerts into LLM-written incident notes using pod logs and events
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

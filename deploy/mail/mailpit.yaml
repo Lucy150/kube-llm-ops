@@ -1,0 +1,52 @@
+# Mailpit: a local SMTP server + web inbox. Both Alertmanager (raw alert emails) and the
+# alert-summarizer (AI summary emails) send here, so the demo needs no email account and
+# nothing leaves the laptop. Inbox: `make mail-ui` -> http://localhost:8025
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mail
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailpit
+  namespace: mail
+  labels: {app.kubernetes.io/name: mailpit, app.kubernetes.io/part-of: kube-llm-ops}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: mailpit}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: mailpit}
+    spec:
+      containers:
+        - name: mailpit
+          image: axllent/mailpit:v1.29.6
+          env:
+            - name: MP_MAX_MESSAGES
+              value: "500"
+            - name: MP_SMTP_AUTH_ACCEPT_ANY      # accept any login so real-provider configs can be tested here too
+              value: "true"
+            - name: MP_SMTP_AUTH_ALLOW_INSECURE
+              value: "true"
+          ports:
+            - {name: smtp, containerPort: 1025}
+            - {name: http, containerPort: 8025}
+          readinessProbe:
+            tcpSocket: {port: smtp}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 200m, memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit
+  namespace: mail
+  labels: {app.kubernetes.io/name: mailpit}
+spec:
+  selector: {app.kubernetes.io/name: mailpit}
+  ports:
+    - {name: smtp, port: 1025, targetPort: smtp}
+    - {name: http, port: 8025, targetPort: http}

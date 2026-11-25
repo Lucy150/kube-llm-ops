@@ -1,0 +1,66 @@
+{{- $m := .Values.monitoring }}
+{{- if $m.serviceMonitor }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: llm-gateway
+  labels:
+    app.kubernetes.io/name: llm-gateway
+    {{- include "llm.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llm-gateway
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+---
+{{- end }}
+{{- if $m.rules }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: llm-gateway-slo
+  labels: {{- include "llm.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: llm-gateway
+      rules:
+        - alert: LLMGatewayHighLatency
+          expr: |
+            histogram_quantile(0.95, sum by (le) (rate(llm_request_duration_seconds_bucket[5m])))
+              > {{ $m.latencyP95ThresholdSeconds }}
+          for: 5m
+          labels: {severity: warning, namespace: {{ .Release.Namespace }}}
+          annotations:
+            summary: LLM gateway p95 latency above {{ $m.latencyP95ThresholdSeconds }}s
+            description: Users are waiting too long for completions. Check CPU throttling on the ollama pod.
+        - alert: LLMGatewayShedding
+          expr: sum(rate(llm_rejected_requests_total[5m])) > 0
+          for: 2m
+          labels: {severity: warning, namespace: {{ .Release.Namespace }}}
+          annotations:
+            summary: LLM gateway is rejecting requests with 429
+            description: Demand exceeds maxConcurrency. Scale the model backend or raise the limit.
+        - alert: LLMModelNotReady
+          expr: kube_deployment_status_replicas_available{namespace="{{ .Release.Namespace }}", deployment="ollama"} < 1
+          for: 5m
+          labels: {severity: critical}
+          annotations:
+            summary: Ollama has no ready replica
+            description: The model server is down or still pulling the model.
+---
+{{- end }}
+{{- if $m.dashboard }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-serving-dashboard
+  labels:
+    grafana_dashboard: "1"
+    {{- include "llm.labels" . | nindent 4 }}
+data:
+  llm-serving.json: |-
+{{ .Files.Get "dashboards/llm-serving.json" | indent 4 }}
+{{- end }}

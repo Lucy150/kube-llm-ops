@@ -1,0 +1,107 @@
+{{- $o := .Values.ollama }}
+{{- if $o.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models
+  labels: {{- include "llm.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $o.persistence.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $o.persistence.size }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  labels:
+    app.kubernetes.io/name: ollama
+    {{- include "llm.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # RWO volume: never run two pods against the same model store
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ollama
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ollama
+    spec:
+      containers:
+        - name: ollama
+          image: "{{ $o.image.repository }}:{{ $o.image.tag }}"
+          imagePullPolicy: {{ $o.image.pullPolicy }}
+          # Start the server, pull the model once it is up, then hand over to the server process.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              ollama serve &
+              pid=$!
+              until ollama list >/dev/null 2>&1; do sleep 1; done
+              echo "pulling model ${MODEL}"
+              ollama pull "${MODEL}"
+              wait $pid
+          env:
+            - name: MODEL
+              value: {{ $o.model | quote }}
+            - name: OLLAMA_HOST
+              value: "0.0.0.0:11434"
+            - name: OLLAMA_KEEP_ALIVE
+              value: {{ $o.keepAlive | quote }}
+            - name: OLLAMA_NUM_PARALLEL
+              value: {{ $o.numParallel | quote }}
+          ports:
+            - name: http
+              containerPort: 11434
+          # Model download can take minutes on first start: give it up to 15 min.
+          startupProbe:
+            exec:
+              command: ["/bin/sh", "-c", "ollama show \"${MODEL}\" >/dev/null"]
+            periodSeconds: 10
+            failureThreshold: 90
+          # Ready = model is actually on disk, not just "process is up".
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "ollama show \"${MODEL}\" >/dev/null"]
+            periodSeconds: 15
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources: {{- toYaml $o.resources | nindent 12 }}
+          volumeMounts:
+            - name: models
+              mountPath: /root/.ollama
+      volumes:
+        - name: models
+          {{- if $o.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: ollama-models
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  labels:
+    app.kubernetes.io/name: ollama
+    {{- include "llm.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: ollama
+  ports:
+    - name: http
+      port: 11434
+      targetPort: http

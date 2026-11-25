@@ -1,0 +1,30 @@
+image:
+  repository: alert-summarizer
+  tag: dev
+  pullPolicy: IfNotPresent
+
+llmGatewayUrl: http://llm-gateway.llm.svc.cluster.local:8080
+
+notify:
+  kind: email              # log | slack | discord | email  (summaries are always logged as well)
+  # slack/discord: name of a Secret with key "url" holding the webhook. Never put the URL in values.
+  existingSecret: ""
+
+# Used when notify.kind=email. Defaults send to the in-cluster Mailpit (deploy/mail), no account needed.
+smtp:
+  host: mailpit.mail.svc.cluster.local
+  port: 1025
+  from: alert-summarizer@kube-llm-ops.local
+  to: oncall@kube-llm-ops.local       # comma-separated for several recipients
+  starttls: false                     # true for Gmail / real providers (port 587)
+  # Secret with keys "username" and "password" (e.g. a Gmail app password). Empty = no login (Mailpit).
+  existingSecret: ""
+
+dedupeSeconds: 900
+llmTimeoutSeconds: 240
+
+serviceMonitor: true
+
+resources:
+  requests: {cpu: 50m, memory: 128Mi}
+  limits: {cpu: 500m, memory: 256Mi}

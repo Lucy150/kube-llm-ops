@@ -1,0 +1,19 @@
+# Scenario: a typo in the image tag during a release -> ImagePullBackOff (evidence lives in events, not logs).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: payments}
+  template:
+    metadata:
+      labels: {app: payments}
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.27-alpne   # deliberate typo
+          resources:
+            limits: {cpu: 50m, memory: 64Mi}

@@ -1,0 +1,29 @@
+# Scenario: app can't reach its database and exits -> CrashLoopBackOff.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: checkout}
+  template:
+    metadata:
+      labels: {app: checkout}
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "checkout-service v2.3.1 starting"
+              echo "loading config from /etc/checkout/config.yaml"
+              echo "connecting to postgres at orders-db.demo.svc:5432 (user=checkout)"
+              sleep 2
+              echo "ERROR: dial tcp 10.96.14.2:5432: connect: connection refused"
+              echo "FATAL: could not initialise database pool after 3 retries, exiting"
+              exit 1
+          resources:
+            limits: {cpu: 50m, memory: 32Mi}

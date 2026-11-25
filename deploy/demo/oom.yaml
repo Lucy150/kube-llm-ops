@@ -1,0 +1,27 @@
+# Scenario: a memory leak hits the container limit -> OOMKilled.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reports
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: reports}
+  template:
+    metadata:
+      labels: {app: reports}
+    spec:
+      containers:
+        - name: app
+          image: python:3.12-alpine
+          command: ["python", "-c"]
+          args:
+            - |
+              print("reports-worker: building monthly export", flush=True)
+              chunks = []
+              while True:
+                  chunks.append(bytearray(8 * 1024 * 1024))
+                  print(f"buffered {len(chunks) * 8} MiB of rows", flush=True)
+          resources:
+            limits: {cpu: 100m, memory: 64Mi}

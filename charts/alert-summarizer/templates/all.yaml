@@ -1,0 +1,136 @@
+{{- $labels := dict "app.kubernetes.io/name" "alert-summarizer" "app.kubernetes.io/part-of" "kube-llm-ops" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alert-summarizer
+  labels: {{- toYaml $labels | nindent 4 }}
+---
+# Read-only, and only what the summarizer needs: pods, their logs, and events.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alert-summarizer-reader
+  labels: {{- toYaml $labels | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log, events]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alert-summarizer-reader
+  labels: {{- toYaml $labels | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alert-summarizer-reader
+subjects:
+  - kind: ServiceAccount
+    name: alert-summarizer
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-summarizer
+  labels: {{- toYaml $labels | nindent 4 }}
+spec:
+  replicas: 1   # in-memory dedupe: keep a single replica (see docs/decisions.md)
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alert-summarizer
+  template:
+    metadata:
+      labels: {{- toYaml $labels | nindent 8 }}
+    spec:
+      serviceAccountName: alert-summarizer
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: summarizer
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: LLM_GATEWAY_URL
+              value: {{ .Values.llmGatewayUrl | quote }}
+            - name: NOTIFY_KIND
+              value: {{ .Values.notify.kind | quote }}
+            {{- if .Values.notify.existingSecret }}
+            - name: NOTIFY_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.notify.existingSecret }}
+                  key: url
+            {{- end }}
+            {{- if eq .Values.notify.kind "email" }}
+            - name: SMTP_HOST
+              value: {{ .Values.smtp.host | quote }}
+            - name: SMTP_PORT
+              value: {{ .Values.smtp.port | quote }}
+            - name: SMTP_FROM
+              value: {{ .Values.smtp.from | quote }}
+            - name: SMTP_TO
+              value: {{ .Values.smtp.to | quote }}
+            - name: SMTP_STARTTLS
+              value: {{ .Values.smtp.starttls | quote }}
+            {{- if .Values.smtp.existingSecret }}
+            - name: SMTP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.smtp.existingSecret }}
+                  key: username
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.smtp.existingSecret }}
+                  key: password
+            {{- end }}
+            {{- end }}
+            - name: DEDUPE_SECONDS
+              value: {{ .Values.dedupeSeconds | quote }}
+            - name: LLM_TIMEOUT_SECONDS
+              value: {{ .Values.llmTimeoutSeconds | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-summarizer
+  labels: {{- toYaml $labels | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: alert-summarizer
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- if .Values.serviceMonitor }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: alert-summarizer
+  labels: {{- toYaml $labels | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alert-summarizer
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+{{- end }}
